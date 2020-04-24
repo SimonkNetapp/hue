@@ -17,9 +17,10 @@
 
 from builtins import object
 import datetime
-from nose.tools import assert_true, assert_false, assert_equal
+from nose.tools import assert_true, assert_false, assert_equal, assert_raises
 
 from django_auth_ldap import backend as django_auth_ldap_backend
+from django.db.utils import DataError
 from django.conf import settings
 from django.test.client import Client
 
@@ -37,10 +38,12 @@ from desktop.lib.test_utils import add_to_group
 
 
 def get_mocked_config():
-  return {'mocked_ldap': {
-    'users': {},
-    'groups': {}
-  }}
+  return {
+    'mocked_ldap': {
+      'users': {},
+      'groups': {}
+    }
+  }
 
 class TestLoginWithHadoop(PseudoHdfsTestBase):
   integration = True
@@ -746,15 +749,14 @@ class TestLogin(PseudoHdfsTestBase):
     response = client.post('/hue/accounts/login/', dict(username=self.test_username, password="test"), follow=True)
     assert_equal(200, response.status_code, "Expected ok status.")
 
-class TestLoginNoHadoop(object):
 
+class TestLogin(object):
   reset = []
-  test_username = "test_login_no_hadoop"
+  test_username = "test_login"
 
   @classmethod
   def setup_class(cls):
-    # Simulate first login ever
-    User.objects.all().delete()
+    User.objects.all().delete()  # Simulate first login ever
 
     cls.auth_backends = settings.AUTHENTICATION_BACKENDS
     settings.AUTHENTICATION_BACKENDS = ('desktop.auth.backend.AllowFirstUserDjangoBackend',)
@@ -766,7 +768,9 @@ class TestLoginNoHadoop(object):
   def setUp(self):
     self.c = Client()
 
-    self.reset.append( conf.AUTH.BACKEND.set_for_testing(['desktop.auth.backend.AllowFirstUserDjangoBackend']) )
+    self.reset.append(
+      conf.AUTH.BACKEND.set_for_testing(['desktop.auth.backend.AllowFirstUserDjangoBackend'])
+    )
 
   def tearDown(self):
     for finish in self.reset:
@@ -776,8 +780,11 @@ class TestLoginNoHadoop(object):
     if Group.objects.filter(name=self.test_username).exists():
       Group.objects.filter(name=self.test_username).delete()
 
+
   def test_login_does_not_reset_groups(self):
-    self.reset.append( conf.AUTH.BACKEND.set_for_testing(["desktop.auth.backend.AllowFirstUserDjangoBackend"]) )
+    self.reset.append(
+      conf.AUTH.BACKEND.set_for_testing(["desktop.auth.backend.AllowFirstUserDjangoBackend"])
+    )
 
     client = make_logged_in_client(username=self.test_username, password="test")
     client.get('/accounts/logout')
@@ -802,6 +809,26 @@ class TestLoginNoHadoop(object):
     existing_profile = get_profile(user)
 
     assert_equal('desktop.auth.backend.AllowFirstUserDjangoBackend', existing_profile.data['auth_backend'])
+
+
+  def test_login_long_username(self):
+    self.reset.append(
+      conf.AUTH.BACKEND.set_for_testing(["desktop.auth.backend.AllowFirstUserDjangoBackend"])
+    )
+
+    username = 'a' * 15
+    make_logged_in_client(username=username, password="test")
+
+    username = 'a' * 145
+    make_logged_in_client(username=username, password="test")
+
+    username = 'a' * 255  # 250 is currently the max in the User model
+    make_logged_in_client(username=username, password="test")
+    # assert_raises(DataError, make_logged_in_client, username=username, password="test")
+
+    username = 'a' * 1000
+    make_logged_in_client(username=username, password="test")
+    assert_raises(DataError, make_logged_in_client, username=username, password="test")
 
 
 class TestImpersonationBackend(object):
